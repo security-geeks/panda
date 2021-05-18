@@ -1,19 +1,15 @@
 #ifndef TCG_UTILS_H
 #define TCG_UTILS_H
 
+#include "panda/plugin.h"
+#include "tcg.h"
+
+#ifdef __cplusplus
+
 #include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <vector>
-
-#include "panda/plugin.h"
-#include "tcg.h"
-
-/**
- * Search the TCG context for the first guest instruction marker and return a
- * pointer to it.
- */
-TCGOp *find_first_guest_insn();
 
 /**
  * Template that converts host pointers to TCG constants. Not really intended
@@ -27,6 +23,19 @@ intptr_t insert_tcg_tmp(TCGOp **after_op, A *value)
     TCGArg *store_args = &tcg_ctx.gen_opparam_buf[(*after_op)->args];
     store_args[0] = GET_TCGV_I64(tmp);
     store_args[1] = reinterpret_cast<TCGArg>(value);
+    return GET_TCGV_I64(tmp);
+}
+
+/**
+ * Template that converts uin64_t to a TCG constants. Not really inteded to be called directly.*/
+template<typename A>
+intptr_t insert_tcg_tmp(TCGOp **after_op, A value)
+{
+    auto tmp = tcg_temp_new_i64();
+    *after_op = tcg_op_insert_after(&tcg_ctx, *after_op, INDEX_op_movi_i64, 2);
+    TCGArg *store_args = &tcg_ctx.gen_opparam_buf[(*after_op)->args];
+    store_args[0] = GET_TCGV_I64(tmp);
+    store_args[1] = static_cast<TCGArg>(value);
     return GET_TCGV_I64(tmp);
 }
 
@@ -75,10 +84,18 @@ void insert_call(TCGOp **after_op, F *func_ptr, A... args)
     // Insert all arguments as TCG temporaries.
     std::vector<intptr_t> ia = insert_args(after_op, args ...);
 
-    // Insert the call op.
-    *after_op = tcg_op_insert_after(&tcg_ctx, *after_op, INDEX_op_call, ia.size() + 1);
+    // Insert the call op. Here be dragons: the number of "arguments" passed to
+    // the tcg_op_insert_after is NOT the number of call arguments. Instead,
+    // the arguments in this context is the number of parameters to a call op.
+    // A call op has N output parameters, M output parameters, a function
+    // pointer, and a flags field. Therefore the number to pass to this
+    // function then is N + M + 2. For this case, we have no output arguments,
+    // so we take the number of input arguments and add 2 to compute how many
+    // parameters this call op has.
+    *after_op = tcg_op_insert_after(&tcg_ctx, *after_op, INDEX_op_call, ia.size() + 2);
 
     // Populate call op parameters.
+    (*after_op)->callo = 0; // no return value
     (*after_op)->calli = ia.size();
     TCGArg *call_args = &tcg_ctx.gen_opparam_buf[(*after_op)->args];
     for (int i = 0; i < ia.size(); i++) {
@@ -116,5 +133,34 @@ T try_parse(const std::string& value)
     }
     return static_cast<T>(tmp);
 }
+
+extern "C"
+{
+#endif
+
+/**
+ * Search the TCG context for the first guest instruction marker and return a
+ * pointer to it.
+ */
+TCGOp *find_first_guest_insn(void);
+
+/**
+ * Search the TCG context for the guest instruction marker with the given
+ * address.
+ */
+TCGOp *find_guest_insn_by_addr(target_ulong addr);
+
+
+/* 
+*  Search the TCG context for the last guest instruction marker and return
+*  a pointer to it.
+*/
+TCGOp *find_last_guest_insn(void);
+
+void insert_call_1p(TCGOp **after_op, void(*func)(void*), void *val);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

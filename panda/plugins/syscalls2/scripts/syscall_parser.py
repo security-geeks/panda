@@ -54,7 +54,13 @@ KNOWN_ARCH = {
         'bits': 32,
         'rt_callno_reg': 'env->regs[7]',        # register holding syscall number at runtime
         'rt_sp_reg': 'env->regs[13]',           # register holding stack pointer at runtime
-        'qemu_target': 'defined(TARGET_ARM)',   # qemu target name for this arch - used in guards
+        'qemu_target': 'defined(TARGET_ARM) && !defined(TARGET_AARCH64)',   # qemu target name for this arch - used in guards
+    },
+    'arm64': {
+        'bits': 64,
+        'rt_callno_reg': 'env->xregs[8]',        # register holding syscall number at runtime (env->pc)
+        'rt_sp_reg': 'env->regs[31]',           # register holding stack pointer at runtime (env->sp)
+        'qemu_target': 'defined(TARGET_ARM) && defined(TARGET_AARCH64)',   # qemu target name for this arch - used in guards
     },
     'mips': {
         'bits': 32,
@@ -152,6 +158,7 @@ class Argument(object):
         self.arch_bits = arch_bits
         if self.raw == '' or self.raw == 'void':
             raise EmptyArgumentError()
+        self.struct_name = "n/a"
 
         typesforbits = Argument.types32
         if (64 == arch_bits):
@@ -176,9 +183,21 @@ class Argument(object):
         # types defined above are matched against the whole raw argument string
         # this means that e.g. mode_t will also match a umode_t agument
         if Argument.charre.search(self.raw) and not any([self.name.endswith('buf'), self.name == '...', self.name.endswith('[]')]):
-            self.type = 'STR'
-        elif any(['*' in self.raw, '[]' in self.raw, any([x in self.raw for x in typesforbits['ptr']])]):
-            self.type = 'PTR'
+            self.type = 'STR_PTR'
+        elif any(['*' in self.raw, '[]' in self.raw, any([x in self.raw for x in typesforbits['ptr']])]) and (not 'struct' in self.raw) and (not '_t' in self.raw):
+            self.type = 'BUF_PTR'
+        elif any(['*' in self.raw, '[]' in self.raw, any([x in self.raw for x in typesforbits['ptr']])]) and any(['struct' in self.raw, '_t' in self.raw]):
+            self.type = 'STRUCT_PTR'
+            words = self.raw.split(" ")
+            try:
+                struct_idx = words.index("struct")
+                self.struct_name = words[struct_idx + 1]
+            except:
+                self.struct_name = next(filter(lambda w: w.endswith("_t"), words), self.struct_name)
+
+        # TODO: how to map to C type?
+        #elif ('struct' in self.raw):
+        #    self.type = 'STRUCT'
         elif any([x in self.raw for x in typesforbits['u64']]):
             self.type = 'U64'
         elif any([x in self.raw for x in typesforbits['s64']]):
@@ -205,9 +224,9 @@ class Argument(object):
 
     @property
     def ctype(self):
-        if self.type in ['STR', 'PTR'] and self.arch_bits == 32:
+        if self.type in ['STR_PTR', 'BUF_PTR', 'STRUCT_PTR'] and self.arch_bits == 32:
             return 'uint32_t'
-        elif self.type in ['STR', 'PTR']:
+        elif self.type in ['STR_PTR', 'BUF_PTR', 'STRUCT_PTR']:
             return 'uint64_t'
         elif self.type == 'U32':
             return 'uint32_t'

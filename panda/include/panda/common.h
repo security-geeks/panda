@@ -120,7 +120,7 @@ bool enter_priv(CPUState* cpu);
 
 /**
  * @brief Revert the guest to the privilege mode it was in prior to the last call
- * to enter_priv(). A NO-OP for architectures where enter_prov is a NO-OP.
+ * to enter_priv(). A NO-OP for architectures where enter_priv() is a NO-OP.
  */
 void exit_priv(CPUState* cpu);
 
@@ -289,13 +289,17 @@ static inline MemTxResult PandaVirtualAddressToRamOffset(ram_addr_t* out, CPUSta
 }
 
 /**
- * @brief Determines if guest is currently executes in kernel mode.
+ * @brief Determines if guest is currently executing in kernel mode, e.g. execution privilege level.
  */
-static inline bool panda_in_kernel(CPUState *cpu) {
+static inline bool panda_in_kernel_mode(const CPUState *cpu) {
     CPUArchState *env = (CPUArchState *)cpu->env_ptr;
 #if defined(TARGET_I386)
     return ((env->hflags & HF_CPL_MASK) == 0);
 #elif defined(TARGET_ARM)
+    // See target/arm/cpu.h arm_current_el
+    if (env->aarch64) {
+        return extract32(env->pstate, 2, 2) > 0;
+    }
     // Note: returns true for non-SVC modes (hypervisor, monitor, system, etc).
     // See: https://www.keil.com/pack/doc/cmsis/Core_A/html/group__CMSIS__CPSR__M.html
     return ((env->uncached_cpsr & CPSR_M) > ARM_CPU_MODE_USR);
@@ -304,10 +308,37 @@ static inline bool panda_in_kernel(CPUState *cpu) {
 #elif defined(TARGET_MIPS)
     return (env->hflags & MIPS_HFLAG_KSU) == MIPS_HFLAG_KM;
 #else
-#error "panda_in_kernel() not implemented for target architecture."
+#error "panda_in_kernel_mode() not implemented for target architecture."
     return false;
 #endif
 }
+
+/**
+ * @brief Determines if guest is currently executing in kernel mode. Old API name for panda_in_kernel_mode().
+ */
+static inline bool panda_in_kernel(const CPUState *cpu) {
+    return panda_in_kernel_mode(cpu);
+}
+
+/**
+ * @brief Determines if guest is currently executing kernelspace code, regardless of privilege level.
+ * Necessary because there's a small bit of kernelspace code that runs AFTER a switch to usermode privileges.
+ * Therefore, certain analysis logic can't rely on panda_in_kernel_mode() alone.
+ * Checking the MSB means this should work even if KASLR is enabled.
+ */
+static inline bool panda_in_kernel_code_linux(CPUState *cpu) {
+    // https://www.kernel.org/doc/html/latest/vm/highmem.html
+    // https://github.com/torvalds/linux/blob/master/Documentation/x86/x86_64/mm.rst
+    // If addr MSB set -> kernelspace!
+
+    target_ulong msb_mask = ((target_ulong)1 << ((sizeof(target_long) * 8) - 1));
+    if (msb_mask & cpu->panda_guest_pc) {
+        return true;
+    } else {
+        return false;
+    }
+}
+
 /**
  * @brief Returns the guest kernel stack pointer.
  */
@@ -329,11 +360,15 @@ static inline target_ulong panda_current_ksp(CPUState *cpu) {
         return kernel_esp;
     }
 #elif defined(TARGET_ARM)
-    if ((env->uncached_cpsr & CPSR_M) == ARM_CPU_MODE_SVC) {
-        return env->regs[13];
-    }else {
-        // Read banked R13 for SVC mode to get the kernel SP (1=>SVC bank from target/arm/internals.h)
-        return env->banked_r13[1];
+    if(env->aarch64) {
+        return env->sp_el[1];
+    } else {
+        if ((env->uncached_cpsr & CPSR_M) == ARM_CPU_MODE_SVC) {
+            return env->regs[13];
+        }else {
+            // Read banked R13 for SVC mode to get the kernel SP (1=>SVC bank from target/arm/internals.h)
+            return env->banked_r13[1];
+        }
     }
 #elif defined(TARGET_PPC)
     // R1 on PPC.
@@ -349,7 +384,7 @@ static inline target_ulong panda_current_ksp(CPUState *cpu) {
 /**
  * @brief Returns the guest stack pointer.
  */
-static inline target_ulong panda_current_sp(CPUState *cpu) {
+static inline target_ulong panda_current_sp(const CPUState *cpu) {
     CPUArchState *env = (CPUArchState *)cpu->env_ptr;
 #if defined(TARGET_I386)
     // valid on x86 and x86_64
@@ -374,7 +409,7 @@ static inline target_ulong panda_current_sp(CPUState *cpu) {
  * abstraction for retrieving a call return value. It still has to
  * be used in the proper context to retrieve a meaningful value.
  */
-static inline target_ulong panda_get_retval(CPUState *cpu) {
+static inline target_ulong panda_get_retval(const CPUState *cpu) {
     CPUArchState *env = (CPUArchState *)cpu->env_ptr;
 #if defined(TARGET_I386)
     // EAX for x86.

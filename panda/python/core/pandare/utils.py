@@ -1,4 +1,7 @@
 # Helper utilities functions and classes for use in pypanda.
+'''
+Misc helper functions
+'''
 
 from colorama import Fore, Style
 from functools import wraps
@@ -15,6 +18,12 @@ def progress(msg):
     Print a message with a green "[PYPANDA]" prefix
     """
     print(Fore.GREEN + '[PYPANDA] ' + Fore.RESET + Style.BRIGHT + msg +Style.RESET_ALL)
+
+def warn(msg):
+    """
+    Print a message with a red "[PYPANDA]" prefix
+    """
+    print(Fore.RED + '[PYPANDA] ' + Fore.RESET + Style.BRIGHT + msg +Style.RESET_ALL)
 
 def make_iso(directory, iso_path):
     '''
@@ -125,17 +134,3 @@ class plugin_list(dict):
         if plugin_name not in self:
             self._panda.load_plugin(plugin_name)
         return super().__getitem__(plugin_name)
-
-
-class Hook(object):
-    '''
-    Maintains the state of a hook as defined by a user.
-    '''
-    def __init__(self,is_enabled=True,is_kernel=True,hook_cb=True,target_addr=0,target_library_offset=0,library_name=None,program_name=None):
-        self.is_enabled = is_enabled
-        self.is_kernel = is_kernel
-        self.hook_cb = hook_cb
-        self.target_addr = target_addr
-        self.target_library_offset = target_library_offset
-        self.library_name = library_name
-        self.program_name = program_name

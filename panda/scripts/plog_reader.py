@@ -1,5 +1,8 @@
 #!/usr/bin/python3
 
+# Note this file is a duplicate of the one in the pandare python package.
+# This file is no longer maintained, if you install the pandare package you can
+# get equivalent behavior with python3 -m pandare.plog_reader [input file]
 
 import sys
 import os
@@ -13,7 +16,7 @@ panda_dir = dirname(dirname(dirname(os.path.realpath(__file__))))
 
 # components of paths to be serched
 top_dirs = [panda_dir, dirname(panda_dir)]
-build_dirs = ['build-panda', 'build', 'opt-panda', 'debug-panda']
+build_dirs = ['.', 'build-panda', 'build', 'opt-panda', 'debug-panda']
 arch_dirs = ['i386-softmmu', 'x86_64-softmmu']
 searched_paths = []
 
@@ -105,3 +108,4 @@ if __name__ == "__main__":
             if i > 0: print(',')
             print(MessageToJson(m), end='')
     print('\n]')
+

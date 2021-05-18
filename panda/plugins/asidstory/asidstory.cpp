@@ -447,10 +447,14 @@ void save_proc_range(uint64_t instr_end) {
     process_tids[process].insert(first_good_proc_tid);
 
     // really this process should have only one parent and it should not change
-    if (process_ppid.count(process) == 0)
+    if (process_ppid.count(process) == 0) {
         process_ppid[process] = first_good_proc->ppid;
-    else
-        assert (process_ppid[process] == first_good_proc->ppid);
+    } else {
+        // It's okay if the PPID was originally 1 (init) then changed to another process - just record init was the parent.
+        // It's also okay if the PPID was non-1 (not init) but then changes to 1 (process was reaped)
+        // We don't currently support arbitrary PPID changes (e.g., as caused by prctl)
+        assert (process_ppid[process] == first_good_proc->ppid || process_ppid[process] == 1 || first_good_proc->ppid == 1);
+    }
 
     // process asid also should not change
     if (process_asid.count(process) == 0)
@@ -725,21 +729,16 @@ void asidstory_before_block_exec(CPUState *env, TranslationBlock *tb) {
 }
 
 
+static_assert(CHAR_BIT == 8);
+static_assert(sizeof(char) == sizeof(uint8_t)); /* this is pointless, sizeof(char) == 1 by definition, and uint8_t must be exactly 8 bits if defined */
 string read_guest_null_terminated_string(CPUState *cpu, uint64_t addr) {
-    // find length of string
-    int len = 0;
-    while (len < 1024) {
-        uint8_t c;
-        int rv = panda_virtual_memory_read(cpu, addr+len, &c, 1);
-        if (rv == -1) break;
-        if (c == 0) break;
-        len ++;
-    }
-    string the_string("");
-    if (len == 0) return the_string;
-    uint8_t buffer[1024];
-    panda_virtual_memory_read(cpu, addr, buffer, len);
-    return string((const char *) buffer);
+    char buffer[1024];
+    size_t len; /* len must escape the loop scope */
+    for (len = 0; len < sizeof(buffer); ++len)
+        if ((panda_virtual_memory_read(cpu, addr+len, (uint8_t*)&buffer[len], 1) != 0) ||
+            (buffer[len] == 0))
+            break;
+    return string(buffer, len);
 }
 
 
